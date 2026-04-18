@@ -1,5 +1,11 @@
 # wohnung_finder
-Finding a place in Berlin is tough. This project is transitioning to a Telegram-based notifier that monitors listings from Berlin's six landeseigene Wohnungsbaugesellschaften.
+Finding a place in Berlin is tough. This project is a Telegram-based notifier that monitors listings from Berlin's six landeseigene Wohnungsbaugesellschaften.
+
+## It makes things worse
+_This section was inspired by [Flathunter](https://github.com/flathunters/flathunter), kudos for their work_
+
+Fundamentally, projects like this make it harder to find an apartment for people not using such methods. Rents are too high, apartments are too scarcely available, these are the real problems.
+So use the bot to find a place, because you have better things to do than refreshing 5 times a minute on those websites. Once you've found yourself a cozy nest, consider supporting alternatives like the [Mietshäusersyndikat](https://www.syndikat.org/en/the-joint-venture/).
 
 ## Current implementation status
 - Modular crawler architecture is in place (`scrapers/`, `shared/`, `database.py`, `config.py`, `main.py`).
@@ -12,8 +18,6 @@ Finding a place in Berlin is tough. This project is transitioning to a Telegram-
 - Maximum 2 outbound crawl calls per minute (global).
 - Randomized normal-distribution delay between crawl calls.
 - No crawl calls between 00:00 and 06:00 Europe/Berlin local time.
-
-See `PLAN.md` for migration milestones and next steps.
 
 ## Telegram Commands
 - `/start` subscribe current chat to all enabled companies.
