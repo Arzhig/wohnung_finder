@@ -61,6 +61,13 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# wohnung_finder runtime data
+data/*.db
+data/*.db-*
+data/*.sqlite
+data/*.sqlite3
+data/*.sqlite3-*
+
 # Flask stuff:
 instance/
 .webassets-cache
@@ -205,3 +212,5 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+PLAN.md
