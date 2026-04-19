@@ -11,7 +11,8 @@ So use the bot to find a place, because you have better things to do than refres
 - Modular crawler architecture is in place (`scrapers/`, `shared/`, `database.py`, `config.py`, `main.py`).
 - WBM parser is implemented and running through the shared pipeline.
 - degewo parser is implemented and running through the shared pipeline.
-- The remaining four providers are scaffolded and ready for parser implementation.
+- gewobag parser is implemented and running through the shared pipeline.
+- The remaining three providers are scaffolded and ready for parser implementation.
 - Telegram notification sending is wired via bot token and database-driven subscriptions.
 - Telegram command worker is active with `/start`, `/status`, `/subscribe`, `/unsubscribe`, and `/filters`.
 

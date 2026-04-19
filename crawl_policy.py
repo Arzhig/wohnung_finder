@@ -12,6 +12,8 @@ from config import CrawlPolicyConfig
 
 
 class CrawlPolicy:
+    _timezone_fallback_warned = False
+
     def __init__(self, config: CrawlPolicyConfig) -> None:
         self.config = config
         self.request_timestamps: deque[float] = deque()
@@ -20,10 +22,12 @@ class CrawlPolicy:
         try:
             self.tz = ZoneInfo(config.timezone)
         except ZoneInfoNotFoundError:
-            logging.warning(
-                "Timezone '%s' not found. Falling back to UTC. Install tzdata to use named timezones.",
-                config.timezone,
-            )
+            if not CrawlPolicy._timezone_fallback_warned:
+                logging.warning(
+                    "Timezone '%s' not found. Falling back to UTC. Install tzdata to use named timezones.",
+                    config.timezone,
+                )
+                CrawlPolicy._timezone_fallback_warned = True
             self.tz = timezone.utc
 
     def wait_for_slot(self) -> None:
