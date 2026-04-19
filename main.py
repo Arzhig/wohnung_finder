@@ -21,15 +21,23 @@ from scrapers import (
 )
 
 
-def _build_scrapers(crawl_policy: CrawlPolicy, timeout_seconds: int, config):
+def _build_scrapers(timeout_seconds: int, config):
+    # Keep one crawl policy instance per crawler so rate limits apply per source.
+    wbm_policy = CrawlPolicy(config.crawl_policy)
+    howoge_policy = CrawlPolicy(config.crawl_policy)
+    gesobau_policy = CrawlPolicy(config.crawl_policy)
+    gewobag_policy = CrawlPolicy(config.crawl_policy)
+    stadt_und_land_policy = CrawlPolicy(config.crawl_policy)
+    degewo_policy = CrawlPolicy(config.crawl_policy)
+
     return {
-        "wbm": WBMScraper(crawl_policy=crawl_policy, timeout_seconds=timeout_seconds),
-        "howoge": HOWOGEScraper(crawl_policy=crawl_policy, timeout_seconds=timeout_seconds),
-        "gesobau": GESOBAUScraper(crawl_policy=crawl_policy, timeout_seconds=timeout_seconds),
-        "gewobag": GEWOBAGScraper(crawl_policy=crawl_policy, timeout_seconds=timeout_seconds),
-        "stadt_und_land": StadtUndLandScraper(crawl_policy=crawl_policy, timeout_seconds=timeout_seconds),
+        "wbm": WBMScraper(crawl_policy=wbm_policy, timeout_seconds=timeout_seconds),
+        "howoge": HOWOGEScraper(crawl_policy=howoge_policy, timeout_seconds=timeout_seconds),
+        "gesobau": GESOBAUScraper(crawl_policy=gesobau_policy, timeout_seconds=timeout_seconds),
+        "gewobag": GEWOBAGScraper(crawl_policy=gewobag_policy, timeout_seconds=timeout_seconds),
+        "stadt_und_land": StadtUndLandScraper(crawl_policy=stadt_und_land_policy, timeout_seconds=timeout_seconds),
         "degewo": DegewoScraper(
-            crawl_policy=crawl_policy,
+            crawl_policy=degewo_policy,
             timeout_seconds=timeout_seconds,
             inter_page_delay_min_seconds=config.degewo_inter_page_delay_min_seconds,
             inter_page_delay_max_seconds=config.degewo_inter_page_delay_max_seconds,
@@ -74,7 +82,7 @@ def _run_startup_checks(notifier: TelegramNotifier, db: Database, enabled: list[
     placeholder_sources = [
         company
         for company in enabled
-        if company in {"howoge", "gesobau", "gewobag", "stadt_und_land"}
+        if company in {"howoge", "gesobau", "stadt_und_land"}
     ]
     if placeholder_sources:
         logging.warning(
@@ -143,10 +151,9 @@ def run(check_only: bool = False) -> None:
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
-    crawl_policy = CrawlPolicy(config.crawl_policy)
     db = Database(config.database_path)
     notifier = TelegramNotifier(config.telegram_bot_token)
-    scrapers = _build_scrapers(crawl_policy, config.request_timeout_seconds, config)
+    scrapers = _build_scrapers(config.request_timeout_seconds, config)
 
     enabled = [company for company in config.enabled_companies if company in scrapers]
     if not enabled:
