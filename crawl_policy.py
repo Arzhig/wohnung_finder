@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 import random
+import threading
 import time
 from collections import deque
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from config import CrawlPolicyConfig
 
@@ -14,13 +16,22 @@ class CrawlPolicy:
         self.config = config
         self.request_timestamps: deque[float] = deque()
         self.last_request_ts: float | None = None
-        self.tz = ZoneInfo(config.timezone)
+        self._lock = threading.Lock()
+        try:
+            self.tz = ZoneInfo(config.timezone)
+        except ZoneInfoNotFoundError:
+            logging.warning(
+                "Timezone '%s' not found. Falling back to UTC. Install tzdata to use named timezones.",
+                config.timezone,
+            )
+            self.tz = timezone.utc
 
     def wait_for_slot(self) -> None:
-        self._wait_if_quiet_hours()
-        self._wait_for_rate_limit()
-        self._wait_for_randomized_delay()
-        self._record_request()
+        with self._lock:
+            self._wait_if_quiet_hours()
+            self._wait_for_rate_limit()
+            self._wait_for_randomized_delay()
+            self._record_request()
 
     def _wait_if_quiet_hours(self) -> None:
         now = datetime.now(self.tz)
@@ -35,6 +46,13 @@ class CrawlPolicy:
                 resume_time = resume_time + timedelta(days=1)
             sleep_seconds = max(0.0, (resume_time - now).total_seconds())
             if sleep_seconds > 0:
+                logging.info(
+                    "Crawl quiet window active (%02d:00-%02d:00 %s). Sleeping %.0f seconds.",
+                    self.config.quiet_hours_start,
+                    self.config.quiet_hours_end,
+                    self.config.timezone,
+                    sleep_seconds,
+                )
                 time.sleep(sleep_seconds)
 
     def _is_in_quiet_window(self, dt: datetime) -> bool:
@@ -50,6 +68,11 @@ class CrawlPolicy:
             oldest = self.request_timestamps[0]
             sleep_seconds = max(0.0, 60 - (now_ts - oldest))
             if sleep_seconds > 0:
+                logging.info(
+                    "Crawl rate limit reached (%s/min). Sleeping %.1f seconds.",
+                    self.config.max_calls_per_minute,
+                    sleep_seconds,
+                )
                 time.sleep(sleep_seconds)
 
     def _wait_for_randomized_delay(self) -> None:
@@ -68,6 +91,10 @@ class CrawlPolicy:
         elapsed = time.time() - self.last_request_ts
         sleep_seconds = max(0.0, bounded - elapsed)
         if sleep_seconds > 0:
+            logging.info(
+                "Applying randomized crawl delay. Sleeping %.1f seconds.",
+                sleep_seconds,
+            )
             time.sleep(sleep_seconds)
 
     def _record_request(self) -> None:

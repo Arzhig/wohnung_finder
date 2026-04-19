@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import random
 import threading
 import time
 
@@ -20,15 +21,39 @@ from scrapers import (
 )
 
 
-def _build_scrapers(crawl_policy: CrawlPolicy, timeout_seconds: int):
+def _build_scrapers(crawl_policy: CrawlPolicy, timeout_seconds: int, config):
     return {
         "wbm": WBMScraper(crawl_policy=crawl_policy, timeout_seconds=timeout_seconds),
         "howoge": HOWOGEScraper(crawl_policy=crawl_policy, timeout_seconds=timeout_seconds),
         "gesobau": GESOBAUScraper(crawl_policy=crawl_policy, timeout_seconds=timeout_seconds),
         "gewobag": GEWOBAGScraper(crawl_policy=crawl_policy, timeout_seconds=timeout_seconds),
         "stadt_und_land": StadtUndLandScraper(crawl_policy=crawl_policy, timeout_seconds=timeout_seconds),
-        "degewo": DegewoScraper(crawl_policy=crawl_policy, timeout_seconds=timeout_seconds),
+        "degewo": DegewoScraper(
+            crawl_policy=crawl_policy,
+            timeout_seconds=timeout_seconds,
+            inter_page_delay_min_seconds=config.degewo_inter_page_delay_min_seconds,
+            inter_page_delay_max_seconds=config.degewo_inter_page_delay_max_seconds,
+            cooldown_seconds=config.degewo_cooldown_seconds,
+            cooldown_status_codes=config.degewo_cooldown_status_codes,
+        ),
     }
+
+
+def _next_delay_for_company(config, company: str) -> float:
+    if company == "wbm":
+        return random.uniform(
+            config.wbm_cycle_delay_min_seconds,
+            config.wbm_cycle_delay_max_seconds,
+        )
+    if company == "degewo":
+        return random.uniform(
+            config.degewo_cycle_delay_min_seconds,
+            config.degewo_cycle_delay_max_seconds,
+        )
+    return random.uniform(
+        config.default_cycle_delay_min_seconds,
+        config.default_cycle_delay_max_seconds,
+    )
 
 
 def _run_startup_checks(notifier: TelegramNotifier, db: Database, enabled: list[str]) -> None:
@@ -49,7 +74,7 @@ def _run_startup_checks(notifier: TelegramNotifier, db: Database, enabled: list[
     placeholder_sources = [
         company
         for company in enabled
-        if company in {"howoge", "gesobau", "gewobag", "stadt_und_land", "degewo"}
+        if company in {"howoge", "gesobau", "gewobag", "stadt_und_land"}
     ]
     if placeholder_sources:
         logging.warning(
@@ -58,6 +83,56 @@ def _run_startup_checks(notifier: TelegramNotifier, db: Database, enabled: list[
         )
 
     logging.info("Startup checks passed")
+
+
+def _run_company_worker(
+    company: str,
+    scraper,
+    db: Database,
+    notifier: TelegramNotifier,
+    config,
+    stop_event: threading.Event,
+) -> None:
+    logging.info("Worker for '%s' started", company)
+    while not stop_event.is_set():
+        try:
+            listings = scraper.scrape()
+        except Exception as exc:
+            logging.exception("Scraper '%s' failed: %s", company, exc)
+            delay = _next_delay_for_company(config, company)
+            if stop_event.wait(timeout=delay):
+                break
+            continue
+
+        new_count = 0
+        for listing in listings:
+            is_new_listing = db.upsert_listing(listing)
+            if not is_new_listing:
+                continue
+
+            new_count += 1
+            target_chat_ids = db.get_target_chat_ids_for_listing(listing)
+            for chat_id in target_chat_ids:
+                if db.was_sent(chat_id, listing):
+                    continue
+                try:
+                    notifier.send_listing(chat_id, listing)
+                    db.mark_sent(chat_id, listing)
+                except Exception as exc:
+                    logging.exception(
+                        "Failed to send listing '%s' to chat '%s': %s",
+                        listing.unique_key,
+                        chat_id,
+                        exc,
+                    )
+
+        logging.info("Source '%s' produced %s new listings", company, new_count)
+        delay = _next_delay_for_company(config, company)
+        logging.info("Next run for '%s' in %.1f seconds.", company, delay)
+        if stop_event.wait(timeout=delay):
+            break
+
+    logging.info("Worker for '%s' stopped", company)
 
 
 def run(check_only: bool = False) -> None:
@@ -71,7 +146,7 @@ def run(check_only: bool = False) -> None:
     crawl_policy = CrawlPolicy(config.crawl_policy)
     db = Database(config.database_path)
     notifier = TelegramNotifier(config.telegram_bot_token)
-    scrapers = _build_scrapers(crawl_policy, config.request_timeout_seconds)
+    scrapers = _build_scrapers(crawl_policy, config.request_timeout_seconds, config)
 
     enabled = [company for company in config.enabled_companies if company in scrapers]
     if not enabled:
@@ -96,43 +171,26 @@ def run(check_only: bool = False) -> None:
 
     logging.info("Starting apartment monitor for companies: %s", ", ".join(enabled))
 
+    worker_threads: list[threading.Thread] = []
+    for company in enabled:
+        worker = threading.Thread(
+            target=_run_company_worker,
+            args=(company, scrapers[company], db, notifier, config, stop_event),
+            daemon=True,
+            name=f"crawler-{company}",
+        )
+        worker.start()
+        worker_threads.append(worker)
+
     try:
-        while True:
-            for company in enabled:
-                scraper = scrapers[company]
-                try:
-                    listings = scraper.scrape()
-                except Exception as exc:
-                    logging.exception("Scraper '%s' failed: %s", company, exc)
-                    continue
-
-                new_count = 0
-                for listing in listings:
-                    is_new_listing = db.upsert_listing(listing)
-                    if not is_new_listing:
-                        continue
-
-                    new_count += 1
-                    target_chat_ids = db.get_target_chat_ids_for_listing(listing)
-                    for chat_id in target_chat_ids:
-                        if db.was_sent(chat_id, listing):
-                            continue
-                        try:
-                            notifier.send_listing(chat_id, listing)
-                            db.mark_sent(chat_id, listing)
-                        except Exception as exc:
-                            logging.exception(
-                                "Failed to send listing '%s' to chat '%s': %s",
-                                listing.unique_key,
-                                chat_id,
-                                exc,
-                            )
-
-                logging.info("Source '%s' produced %s new listings", company, new_count)
-
-            time.sleep(config.loop_sleep_seconds)
+        while not stop_event.is_set():
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logging.info("Shutdown requested by user. Stopping workers...")
     finally:
         stop_event.set()
+        for worker in worker_threads:
+            worker.join(timeout=5)
         command_thread.join(timeout=5)
 
 
